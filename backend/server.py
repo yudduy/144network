@@ -16,14 +16,12 @@ topology = {
 }
 topology_lock = threading.Lock()
 
-ROUTER_LOG_PATH = os.environ.get('ROUTER_LOG_PATH', os.path.expanduser('~/cs144-labs/router.log'))
+INTERFACE = os.environ.get('CAPTURE_INTERFACE', 'tun0')
 STALE_THRESHOLD = 30
 
 
-def parse_debug_line(line):
-    if 'IPv4:' not in line:
-        return None
-    match = re.search(r'IPv4:\s*(\d+\.\d+\.\d+\.\d+)\s*->\s*(\d+\.\d+\.\d+\.\d+)', line)
+def parse_tcpdump_line(line):
+    match = re.search(r'IP (\d+\.\d+\.\d+\.\d+)\.\d+ > (\d+\.\d+\.\d+\.\d+)\.\d+:', line)
     if match:
         return {'src_ip': match.group(1), 'dst_ip': match.group(2), 'timestamp': time.time()}
     return None
@@ -45,18 +43,15 @@ def aggregate_packet(packet):
         topology['edges'][edge_key]['last_active'] = now
 
 
-def monitor_router_logs():
-    while not os.path.exists(ROUTER_LOG_PATH):
-        time.sleep(2)
-
+def capture_packets():
     process = subprocess.Popen(
-        ['tail', '-F', ROUTER_LOG_PATH],
+        ['sudo', 'tcpdump', '-i', INTERFACE, '-n', '-l', 'ip'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
 
     for line in iter(process.stdout.readline, b''):
-        packet = parse_debug_line(line.decode('utf-8', errors='replace').strip())
+        packet = parse_tcpdump_line(line.decode('utf-8', errors='replace').strip())
         if packet:
             aggregate_packet(packet)
 
@@ -94,5 +89,5 @@ def health():
 
 
 if __name__ == '__main__':
-    threading.Thread(target=monitor_router_logs, daemon=True).start()
+    threading.Thread(target=capture_packets, daemon=True).start()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)

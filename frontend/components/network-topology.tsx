@@ -132,91 +132,8 @@ function createNodeFromIP(ip: string, id?: string, name?: string): NetworkNode {
 }
 
 const initialTopologyData: TopologyData = {
-  nodes: [
-    {
-      id: "n1",
-      name: "Stanford Server",
-      ip: "10.144.1.1",
-      role: "Server",
-      lat: 37.4275,
-      long: -122.1697,
-      status: "active",
-    },
-    { id: "n2", name: "MIT Gateway", ip: "10.144.1.2", role: "Router", lat: 42.3601, long: -71.0942, status: "active" },
-    { id: "n3", name: "London Node", ip: "10.144.2.5", role: "Router", lat: 51.5074, long: -0.1278, status: "active" },
-    { id: "n4", name: "Berlin Client", ip: "10.144.2.10", role: "Client", lat: 52.52, long: 13.405, status: "idle" },
-    {
-      id: "n5",
-      name: "Tokyo Router",
-      ip: "10.144.3.1",
-      role: "Router",
-      lat: 35.6762,
-      long: 139.6503,
-      status: "active",
-    },
-    {
-      id: "n6",
-      name: "Singapore Hub",
-      ip: "10.144.3.5",
-      role: "Server",
-      lat: 1.3521,
-      long: 103.8198,
-      status: "active",
-    },
-    {
-      id: "n7",
-      name: "Sydney Client",
-      ip: "10.144.4.2",
-      role: "Client",
-      lat: -33.8688,
-      long: 151.2093,
-      status: "warning",
-    },
-    { id: "n8", name: "Mumbai Server", ip: "10.144.3.8", role: "Server", lat: 19.076, long: 72.8777, status: "active" },
-    {
-      id: "n9",
-      name: "São Paulo Node",
-      ip: "10.144.5.1",
-      role: "Router",
-      lat: -23.5505,
-      long: -46.6333,
-      status: "active",
-    },
-    { id: "n10", name: "Cairo Client", ip: "10.144.6.3", role: "Client", lat: 30.0444, long: 31.2357, status: "idle" },
-    {
-      id: "n11",
-      name: "Toronto Gateway",
-      ip: "10.144.1.15",
-      role: "Router",
-      lat: 43.6532,
-      long: -79.3832,
-      status: "active",
-    },
-    {
-      id: "n12",
-      name: "Seoul Server",
-      ip: "10.144.3.12",
-      role: "Server",
-      lat: 37.5665,
-      long: 126.978,
-      status: "active",
-    },
-  ],
-  links: [
-    { source: "n1", target: "n2", traffic: 125 },
-    { source: "n2", target: "n3", traffic: 89 },
-    { source: "n3", target: "n4", traffic: 0 }, // No traffic - idle node
-    { source: "n3", target: "n5", traffic: 67 },
-    { source: "n5", target: "n6", traffic: 145 },
-    { source: "n6", target: "n7", traffic: 34 },
-    { source: "n5", target: "n12", traffic: 78 },
-    { source: "n6", target: "n8", traffic: 92 },
-    { source: "n8", target: "n10", traffic: 0 }, // No traffic - idle node
-    { source: "n1", target: "n9", traffic: 56 },
-    { source: "n2", target: "n11", traffic: 110 },
-    { source: "n11", target: "n1", traffic: 98 },
-    { source: "n3", target: "n8", traffic: 45 },
-  ],
+  nodes: [],
+  links: [],
 }
 
 interface TooltipState {
@@ -758,10 +675,10 @@ export function NetworkTopology() {
       <div className="absolute top-4 left-4 z-10 font-mono text-xs space-y-1">
         <div className="flex items-center gap-2">
           <span
-            className={`w-2 h-2 rounded-full ${isBackendConnected ? "bg-green-500 animate-pulse" : "bg-yellow-500"}`}
+            className={`w-2 h-2 rounded-full ${isBackendConnected ? "bg-green-500 animate-pulse" : "bg-red-500"}`}
           />
-          <span className={isBackendConnected ? "text-green-400" : "text-yellow-400"}>
-            {isBackendConnected ? "Live" : "Demo Mode"}
+          <span className={isBackendConnected ? "text-green-400" : "text-red-400"}>
+            {isBackendConnected ? "Live" : "Disconnected"}
           </span>
         </div>
         <div className="text-neutral-500">
@@ -787,6 +704,14 @@ export function NetworkTopology() {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       />
+
+      {topologyData.nodes.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-neutral-500 font-mono text-sm bg-black/50 px-4 py-2 rounded">
+            Waiting for traffic...
+          </div>
+        </div>
+      )}
 
       {tooltip.visible && tooltip.node && (
         <div

@@ -1,99 +1,98 @@
+import os
+import re
 import time
-import json
+import threading
+import subprocess
 from collections import defaultdict
 from flask import Flask, jsonify
 from flask_cors import CORS
-import threading
 
 app = Flask(__name__)
 CORS(app)
 
 topology = {
-    'nodes': {},  # ip -> {first_seen, last_seen, packet_count}
+    'nodes': {},
     'edges': defaultdict(lambda: {'count': 0, 'last_active': 0})
 }
+topology_lock = threading.Lock()
+
+ROUTER_LOG_PATH = os.environ.get('ROUTER_LOG_PATH', os.path.expanduser('~/cs144-labs/router.log'))
+STALE_THRESHOLD = 30
+
+
+def parse_debug_line(line):
+    if 'IPv4:' not in line:
+        return None
+    match = re.search(r'IPv4:\s*(\d+\.\d+\.\d+\.\d+)\s*->\s*(\d+\.\d+\.\d+\.\d+)', line)
+    if match:
+        return {'src_ip': match.group(1), 'dst_ip': match.group(2), 'timestamp': time.time()}
+    return None
+
 
 def aggregate_packet(packet):
-    """
-    Don't store every packet - just update counters
-    This runs on every log line but keeps memory constant
-    """
-    src, dst = packet['src_ip'], packet['dst_ip']
-    now = time.time()
-    
-    # Update nodes
-    for ip in [src, dst]:
-        if ip not in topology['nodes']:
-            topology['nodes'][ip] = {
-                'first_seen': now,
-                'last_seen': now,
-                'packet_count': 0
-            }
-        topology['nodes'][ip]['last_seen'] = now
-        topology['nodes'][ip]['packet_count'] += 1
-    
-    # Update edge
-    edge_key = (src, dst)
-    topology['edges'][edge_key]['count'] += 1
-    topology['edges'][edge_key]['last_active'] = now
+    with topology_lock:
+        src, dst = packet['src_ip'], packet['dst_ip']
+        now = packet['timestamp']
 
-def monitor_logs():
-    """
-    Background thread - reads logs, aggregates in memory
-    This is where filtering happens
-    """
-    import sys
-    for line in sys.stdin:  # Reads from SSH pipe
-        packet = parse_debug_line(line.strip())
+        for ip in [src, dst]:
+            if ip not in topology['nodes']:
+                topology['nodes'][ip] = {'first_seen': now, 'last_seen': now, 'packet_count': 0}
+            topology['nodes'][ip]['last_seen'] = now
+            topology['nodes'][ip]['packet_count'] += 1
+
+        edge_key = (src, dst)
+        topology['edges'][edge_key]['count'] += 1
+        topology['edges'][edge_key]['last_active'] = now
+
+
+def monitor_router_logs():
+    while not os.path.exists(ROUTER_LOG_PATH):
+        time.sleep(2)
+
+    process = subprocess.Popen(
+        ['tail', '-F', ROUTER_LOG_PATH],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+    for line in iter(process.stdout.readline, b''):
+        packet = parse_debug_line(line.decode('utf-8', errors='replace').strip())
         if packet:
             aggregate_packet(packet)
-            # Optional: Filter out noise
-            # if is_interesting(packet):
-            #     aggregate_packet(packet)
 
-# Start monitoring in background
-threading.Thread(target=monitor_logs, daemon=True).start()
 
 @app.route('/api/topology')
 def get_topology():
-    """
-    Frontend calls this every 2-3 seconds
-    Returns current aggregated state
-    """
     now = time.time()
-    
-    # Only include recently active nodes (last 30 seconds)
-    active_nodes = [
-        {'ip': ip, 'packets': data['packet_count']}
-        for ip, data in topology['nodes'].items()
-        if now - data['last_seen'] < 30
-    ]
-    
-    # Only include recently active edges
-    active_edges = [
-        {
-            'source': src,
-            'target': dst,
-            'weight': data['count']
-        }
-        for (src, dst), data in topology['edges'].items()
-        if now - data['last_active'] < 30
-    ]
-    
-    return jsonify({
-        'nodes': active_nodes,
-        'edges': active_edges,
-        'timestamp': now
-    })
+    with topology_lock:
+        active_nodes = [
+            {'ip': ip, 'packets': data['packet_count']}
+            for ip, data in topology['nodes'].items()
+            if now - data['last_seen'] < STALE_THRESHOLD
+        ]
+        active_edges = [
+            {'source': src, 'target': dst, 'weight': data['count']}
+            for (src, dst), data in topology['edges'].items()
+            if now - data['last_active'] < STALE_THRESHOLD
+        ]
+    return jsonify({'nodes': active_nodes, 'edges': active_edges, 'timestamp': now})
+
 
 @app.route('/api/stats')
 def get_stats():
-    return jsonify({
-        'total_nodes': len(topology['nodes']),
-        'active_connections': len([e for e in topology['edges'].values() 
-                                   if time.time() - e['last_active'] < 30]),
-        'total_packets': sum(n['packet_count'] for n in topology['nodes'].values())
-    })
+    now = time.time()
+    with topology_lock:
+        total_nodes = len(topology['nodes'])
+        active_connections = sum(1 for data in topology['edges'].values() if now - data['last_active'] < STALE_THRESHOLD)
+        total_packets = sum(node['packet_count'] for node in topology['nodes'].values())
+    return jsonify({'total_nodes': total_nodes, 'active_connections': active_connections, 'total_packets': total_packets})
+
+
+@app.route('/api/health')
+def health():
+    return jsonify({'status': 'ok', 'timestamp': time.time()})
+
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    threading.Thread(target=monitor_router_logs, daemon=True).start()
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)

@@ -7,6 +7,9 @@ import * as d3 from "d3"
 import { feature } from "topojson-client"
 import { Button } from "@/components/ui/button"
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+const POLL_INTERVAL = 2500
+
 interface GeoFeature {
   type: string
   geometry: any
@@ -32,6 +35,63 @@ interface NetworkLink {
 interface TopologyData {
   nodes: NetworkNode[]
   links: NetworkLink[]
+}
+
+interface ApiNode {
+  ip: string
+  packets: number
+}
+
+interface ApiEdge {
+  source: string
+  target: string
+  weight: number
+}
+
+interface ApiTopologyResponse {
+  nodes: ApiNode[]
+  edges: ApiEdge[]
+  timestamp: number
+}
+
+function inferRoleFromIP(ip: string): NetworkNode["role"] {
+  const parts = ip.split(".")
+  const lastOctet = parseInt(parts[3] || "0", 10)
+  if (lastOctet === 1) return "Router"
+  if (lastOctet === 0 || lastOctet > 200) return "Server"
+  return "Client"
+}
+
+function transformApiResponse(apiData: ApiTopologyResponse): TopologyData {
+  const nodeMap = new Map<string, NetworkNode>()
+
+  apiData.nodes.forEach((apiNode) => {
+    const coords = getCoordinatesFromIP(apiNode.ip)
+    const nodeId = `node-${apiNode.ip.replace(/\./g, "-")}`
+
+    nodeMap.set(apiNode.ip, {
+      id: nodeId,
+      name: `Node ${apiNode.ip}`,
+      ip: apiNode.ip,
+      role: inferRoleFromIP(apiNode.ip),
+      lat: coords.lat,
+      long: coords.long,
+      status: apiNode.packets > 0 ? "active" : "idle",
+    })
+  })
+
+  const links: NetworkLink[] = apiData.edges
+    .filter((edge) => nodeMap.has(edge.source) && nodeMap.has(edge.target))
+    .map((edge) => ({
+      source: nodeMap.get(edge.source)!.id,
+      target: nodeMap.get(edge.target)!.id,
+      traffic: edge.weight,
+    }))
+
+  return {
+    nodes: Array.from(nodeMap.values()),
+    links,
+  }
 }
 
 function getCoordinatesFromIP(ip: string): { lat: number; long: number } {
@@ -188,7 +248,7 @@ function interpolateProjection(raw0: any, raw1: any) {
   })
 }
 
-export function GlobeToMapTransform() {
+export function NetworkTopology() {
   const svgRef = useRef<SVGSVGElement>(null)
   const [isAnimating, setIsAnimating] = useState(false)
   const [progress, setProgress] = useState([0])
@@ -200,6 +260,7 @@ export function GlobeToMapTransform() {
   const [tooltip, setTooltip] = useState<TooltipState>({ visible: false, x: 0, y: 0, node: null })
   const packetAnimationRef = useRef<number | null>(null)
   const [packetProgress, setPacketProgress] = useState(0)
+  const [isBackendConnected, setIsBackendConnected] = useState(false)
 
   const [topologyData, setTopologyData] = useState<TopologyData>(initialTopologyData)
 
@@ -244,6 +305,29 @@ export function GlobeToMapTransform() {
     [],
   )
 
+  useEffect(() => {
+    const fetchTopology = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/topology`)
+        if (!response.ok) {
+          setIsBackendConnected(false)
+          return
+        }
+        const apiData: ApiTopologyResponse = await response.json()
+        setIsBackendConnected(true)
+        if (apiData.nodes && apiData.nodes.length > 0) {
+          setTopologyData(transformApiResponse(apiData))
+        }
+      } catch {
+        setIsBackendConnected(false)
+      }
+    }
+
+    fetchTopology()
+    const intervalId = setInterval(fetchTopology, POLL_INTERVAL)
+    return () => clearInterval(intervalId)
+  }, [])
+
   const width = 800
   const height = 500
 
@@ -266,7 +350,8 @@ export function GlobeToMapTransform() {
       try {
         const response = await fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
         const world: any = await response.json()
-        const countries = feature(world, world.objects.countries).features
+        const geoData = feature(world, world.objects.countries)
+        const countries = (geoData as { features: GeoFeature[] }).features
         setWorldData(countries)
       } catch (error) {
         const fallbackData = [
@@ -671,16 +756,24 @@ export function GlobeToMapTransform() {
   return (
     <div className="relative flex items-center justify-center w-full h-full">
       <div className="absolute top-4 left-4 z-10 font-mono text-xs space-y-1">
+        <div className="flex items-center gap-2">
+          <span
+            className={`w-2 h-2 rounded-full ${isBackendConnected ? "bg-green-500 animate-pulse" : "bg-yellow-500"}`}
+          />
+          <span className={isBackendConnected ? "text-green-400" : "text-yellow-400"}>
+            {isBackendConnected ? "Live" : "Demo Mode"}
+          </span>
+        </div>
         <div className="text-neutral-500">
           <span className="text-neutral-400">Active Nodes:</span>{" "}
           {topologyData.nodes.filter((n) => n.status === "active").length}
         </div>
         <div className="text-neutral-500">
-          <span className="text-neutral-400">Total Throughput:</span>{" "}
-          {topologyData.links.reduce((sum, l) => sum + l.traffic, 0)} MB/s
+          <span className="text-neutral-400">Connections:</span> {topologyData.links.length}
         </div>
         <div className="text-neutral-500">
-          <span className="text-neutral-400">Packet Loss:</span> 0.1%
+          <span className="text-neutral-400">Total Traffic:</span>{" "}
+          {topologyData.links.reduce((sum, l) => sum + l.traffic, 0)} pkts
         </div>
       </div>
 

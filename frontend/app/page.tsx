@@ -1,6 +1,6 @@
-import { GlobeToMapTransform } from "@/components/globe-to-map-transform"
+import { NetworkTopology } from "@/components/network-topology"
 
-export default function Demo22Page() {
+export default function Home() {
   return (
     <div className="flex justify-center items-center min-h-screen bg-[#1a1a1a]">
       <div className="relative flex flex-col h-[600px] w-[840px] rounded-2xl p-4 justify-stretch items-stretch gap-2 overflow-clip bg-neutral-950">
@@ -8,7 +8,7 @@ export default function Demo22Page() {
           <h3 className="text-white mx-2">The 144 Network</h3>
         </div>
         <div className="flex p-2 w-full flex-1 min-h-32 justify-center items-center">
-          <GlobeToMapTransform />
+          <NetworkTopology />
         </div>
       </div>
     </div>
